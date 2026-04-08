@@ -44,7 +44,7 @@ button:hover {
   background: #0a8c6c;
 }
 
-textarea, input {
+textarea, input[type="number"], input[type="file"] {
   width: 100%;
   padding: 12px;
   margin-top: 10px;
@@ -61,6 +61,7 @@ textarea, input {
   margin: 20px auto;
   width: 260px;
   height: 260px;
+  text-align: center;
 }
 
 .small {
@@ -92,9 +93,10 @@ textarea, input {
   <input id="userKey" type="number" value="123456789">
 
   <button onclick="encodeToQR()">تحويل إلى QR</button>
-  <button onclick="goToDecode()">مسح QR لفكّه</button>
+  <button onclick="goToDecode()">مسح أو تحميل QR لفكّه</button>
 
-  <p class="small">يعمل بدون إنترنت — كل شيء يتم داخل جهازك.</p>
+  <p class="small">يعمل بدون إنترنت — كل شيء يتم داخل جهازك
+    م: رأفت عمر.</p>
 </div>
 
 <!-- شاشة عرض QR -->
@@ -116,6 +118,9 @@ textarea, input {
 
   <button onclick="scanQR()">مسح QR بالكاميرا</button>
 
+  <input type="file" id="qrFileInput" accept="image/*">
+  <button onclick="decodeFromQRImage()">تحميل QR من الاستديو</button>
+
   <textarea id="qrInput" rows="3" placeholder="أو الصق نص QR هنا..."></textarea>
   <button onclick="decodeFromQR()">فكّ</button>
 
@@ -133,8 +138,7 @@ textarea, input {
 <div id="reader" style="display:none;"></div>
 
 <script>
-
-/* ====== وظائف التنقل بين الشاشات ====== */
+/* ====== التنقل بين الشاشات ====== */
 function showScreen(id){
   document.querySelectorAll(".screen").forEach(s => s.style.display = "none");
   document.getElementById(id).style.display = "block";
@@ -143,7 +147,7 @@ function showScreen(id){
 function goHome(){ showScreen("screenEncode"); }
 function goToDecode(){ showScreen("screenDecode"); }
 
-/* ====== النظام الترددي (ALM Core) ====== */
+/* ====== نواة ALM ====== */
 const indexToChar = {
   0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
   8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
@@ -229,7 +233,7 @@ function encodeToQR(){
   showScreen("screenQR");
 }
 
-/* ====== فكّ QR ====== */
+/* ====== فكّ QR من نص ====== */
 function decodeFromQR(){
   const data = document.getElementById("qrInput").value.trim();
   if (!data) return;
@@ -269,6 +273,27 @@ function scanQR(){
   );
 }
 
+/* ====== فكّ QR من صورة من الاستديو ====== */
+async function decodeFromQRImage(){
+  const file = document.getElementById("qrFileInput").files[0];
+  if (!file){
+    alert("اختر صورة تحتوي على QR.");
+    return;
+  }
+
+  const html5Qr = new Html5Qrcode("reader");
+
+  try {
+    const result = await html5Qr.scanFile(file, true);
+    document.getElementById("qrInput").value = result;
+    decodeFromQR();
+  } catch (e) {
+    alert("تعذر قراءة QR من الصورة.");
+  }
+
+  html5Qr.clear();
+}
+
 /* ====== حفظ ومشاركة QR ====== */
 function getQRDataURL(){
   const img = document.querySelector("#qrCanvas img");
@@ -279,6 +304,7 @@ function getQRDataURL(){
 
 function saveQR(){
   const url = getQRDataURL();
+  if (!url) return;
   const a = document.createElement("a");
   a.href = url;
   a.download = "alm-qr.png";
@@ -287,6 +313,7 @@ function saveQR(){
 
 async function shareQR(){
   const url = getQRDataURL();
+  if (!url) return;
   const res = await fetch(url);
   const blob = await res.blob();
   const file = new File([blob], "alm-qr.png", {type:"image/png"});
@@ -297,7 +324,6 @@ async function shareQR(){
     alert("المشاركة غير مدعومة.");
   }
 }
-
 </script>
 
 </body>
