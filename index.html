@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ALM — Arabic Language Mapping</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #ffffff;
+  color: #222;
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  background: #0BA37F;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.container {
+  padding: 20px;
+  max-width: 600px;
+  margin: auto;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  background: #0BA37F;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0a8c6c;
+}
+
+textarea, input {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.screen {
+  display: none;
+}
+
+#qrCanvas {
+  margin: 20px auto;
+  width: 260px;
+  height: 260px;
+}
+
+.small {
+  font-size: 13px;
+  color: #666;
+  margin-top: 5px;
+  text-align: center;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+
+<body>
+
+<header>ALM — Arabic Language Mapping</header>
+
+<div class="container">
+
+<!-- شاشة الترميز -->
+<div id="screenEncode" class="screen" style="display:block;">
+  <h3>اكتب نصًا لتحويله إلى QR</h3>
+  <textarea id="inputText" rows="5" placeholder="اكتب أي نص هنا..."></textarea>
+
+  <label>مفتاح المستخدم:</label>
+  <input id="userKey" type="number" value="123456789">
+
+  <button onclick="encodeToQR()">تحويل إلى QR</button>
+  <button onclick="goToDecode()">مسح QR لفكّه</button>
+
+  <p class="small">يعمل بدون إنترنت — كل شيء يتم داخل جهازك.</p>
+</div>
+
+<!-- شاشة عرض QR -->
+<div id="screenQR" class="screen">
+  <h3>رمز QR جاهز للمشاركة</h3>
+
+  <div id="qrCanvas"></div>
+
+  <button onclick="saveQR()">حفظ</button>
+  <button onclick="shareQR()">مشاركة</button>
+  <button onclick="goHome()">رجوع</button>
+
+  <p class="small">يمكن لأي شخص مسح هذا QR لفكّ الرسالة.</p>
+</div>
+
+<!-- شاشة فكّ QR -->
+<div id="screenDecode" class="screen">
+  <h3>فكّ QR</h3>
+
+  <button onclick="scanQR()">مسح QR بالكاميرا</button>
+
+  <textarea id="qrInput" rows="3" placeholder="أو الصق نص QR هنا..."></textarea>
+  <button onclick="decodeFromQR()">فكّ</button>
+
+  <h4>النص المستخرج:</h4>
+  <div id="decodedText" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:60px;"></div>
+
+  <h4>هوية المرسل:</h4>
+  <div id="decodedIdentity" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <button onclick="goHome()">رجوع</button>
+</div>
+
+</div>
+
+<div id="reader" style="display:none;"></div>
+
+<script>
+
+/* ====== وظائف التنقل بين الشاشات ====== */
+function showScreen(id){
+  document.querySelectorAll(".screen").forEach(s => s.style.display = "none");
+  document.getElementById(id).style.display = "block";
+}
+
+function goHome(){ showScreen("screenEncode"); }
+function goToDecode(){ showScreen("screenDecode"); }
+
+/* ====== النظام الترددي (ALM Core) ====== */
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"
+};
+
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i);
+}
+
+function normalizeArabic(s){
+  return (s||"")
+  .replace(/[إأآ]/g,"ا")
+  .replace(/ى/g,"ي")
+  .replace(/ؤ/g,"و")
+  .replace(/ئ/g,"ي")
+  .replace(/ة/g,"ه")
+  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"");
+}
+
+function wordToCode(word){
+  let C = 0n;
+  for(let i=0;i<word.length;i++){
+    const idx = charToIndex[word[i]] || 0;
+    C += BigInt(idx) * (32n ** BigInt(i));
+  }
+  return C;
+}
+
+function codeToWord(C){
+  let word = "";
+  for(let i=0;i<12;i++){
+    const idx = Number(C % 32n);
+    C /= 32n;
+    word += indexToChar[idx] || "";
+  }
+  return word;
+}
+
+function base36ToBigInt(str){
+  let res = 0n;
+  for (let i = 0; i < str.length; i++){
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
+}
+
+/* ====== الترميز إلى QR ====== */
+function encodeToQR(){
+  const text = normalizeArabic(document.getElementById("inputText").value.trim());
+  const key = BigInt(document.getElementById("userKey").value || "0");
+
+  if (!text){
+    alert("أدخل نصًا أولاً.");
+    return;
+  }
+
+  const words = text.split(/\s+/);
+  const f0 = 100000n;
+
+  const encoded = words.map(w=>{
+    const C = wordToCode(w) ^ key;
+    return (f0 + C).toString(36);
+  });
+
+  const payload = {
+    text: encoded.join(","),
+    identity: key.toString()
+  };
+
+  const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+
+  document.getElementById("qrCanvas").innerHTML = "";
+  new QRCode(document.getElementById("qrCanvas"), {
+    text: compressed,
+    width: 260,
+    height: 260
+  });
+
+  showScreen("screenQR");
+}
+
+/* ====== فكّ QR ====== */
+function decodeFromQR(){
+  const data = document.getElementById("qrInput").value.trim();
+  if (!data) return;
+
+  const json = LZString.decompressFromEncodedURIComponent(data);
+  if (!json){
+    alert("QR غير صالح.");
+    return;
+  }
+
+  const payload = JSON.parse(json);
+  const key = BigInt(payload.identity);
+  const f0 = 100000n;
+
+  const parts = payload.text.split(",");
+  const words = parts.map(p=>{
+    const f = base36ToBigInt(p);
+    const C = (f - f0) ^ key;
+    return codeToWord(C);
+  });
+
+  document.getElementById("decodedText").textContent = words.join(" ");
+  document.getElementById("decodedIdentity").textContent = "User Key: " + payload.identity;
+}
+
+/* ====== مسح QR بالكاميرا ====== */
+function scanQR(){
+  const html5Qr = new Html5Qrcode("reader");
+
+  html5Qr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    decoded => {
+      document.getElementById("qrInput").value = decoded;
+      html5Qr.stop();
+    }
+  );
+}
+
+/* ====== حفظ ومشاركة QR ====== */
+function getQRDataURL(){
+  const img = document.querySelector("#qrCanvas img");
+  const canvas = document.querySelector("#qrCanvas canvas");
+  if (img && img.src) return img.src;
+  if (canvas) return canvas.toDataURL("image/png");
+}
+
+function saveQR(){
+  const url = getQRDataURL();
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "alm-qr.png";
+  a.click();
+}
+
+async function shareQR(){
+  const url = getQRDataURL();
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const file = new File([blob], "alm-qr.png", {type:"image/png"});
+
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:"ALM QR"});
+  } else {
+    alert("المشاركة غير مدعومة.");
+  }
+}
+
+</script>
+
+</body>
+</html>
