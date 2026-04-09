@@ -78,8 +78,8 @@ textarea, input[type="number"], input[type="file"] {
 <!-- PDF.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 
-<!-- jsQR -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.min.js"></script>
+<!-- Html5Qrcode -->
+<script src="https://unpkg.com/html5-qrcode"></script>
 
 </head>
 
@@ -115,6 +115,9 @@ textarea, input[type="number"], input[type="file"] {
 
 <h4>النص النهائي / النص المستخرج:</h4>
 <div id="finalOutput" style="padding:10px; white-space:pre-wrap; border:1px solid #ccc; border-radius:8px; min-height:80px;"></div>
+
+<!-- قارئ Html5Qrcode لصورة واحدة -->
+<div id="singleReader" style="display:none;"></div>
 
 </div>
 
@@ -358,6 +361,38 @@ async function shareSpecificQR(qrDiv) {
 }
 
 /* ============================================================
+   فكّ باركود واحد فقط باستخدام Html5Qrcode
+============================================================ */
+async function decodeSingleQR() {
+  const files = document.getElementById("qrFiles").files;
+  if (!files.length) {
+    alert("اختر صورة QR أولاً.");
+    return;
+  }
+
+  const file = files[0];
+  const reader = new Html5Qrcode("singleReader");
+
+  try {
+    const result = await reader.scanFile(file, true);
+    const raw = LZString.decompressFromEncodedURIComponent(result);
+
+    const header = raw.split("|")[0];
+    const body = raw.split("|")[1];
+
+    const decoded = decodeChunk(body);
+
+    document.getElementById("finalOutput").textContent =
+      "المعلومات: " + header + "\n\n" + decoded;
+
+  } catch (e) {
+    alert("فشل في قراءة الباركود.");
+  }
+
+  reader.clear();
+}
+
+/* ============================================================
    فكّ عدة باركودات ودمجها
 ============================================================ */
 async function decodeMultipleQR() {
@@ -370,20 +405,26 @@ async function decodeMultipleQR() {
   const parts = {};
   let totalParts = 0;
 
+  const reader = new Html5Qrcode("singleReader");
+
   for (let file of files) {
-    const text = await scanQRFromImage(file);
-    if (!text) continue;
+    try {
+      const result = await reader.scanFile(file, true);
+      const raw = LZString.decompressFromEncodedURIComponent(result);
 
-    const raw = LZString.decompressFromEncodedURIComponent(text);
-    if (!raw) continue;
+      const header = raw.split("|")[0];
+      const body = raw.split("|")[1];
 
-    const header = raw.split("|")[0];
-    const body = raw.split("|")[1];
+      const [current, total] = header.replace("part=","").split("/");
+      totalParts = parseInt(total);
+      parts[parseInt(current)] = body;
 
-    const [current, total] = header.replace("part=","").split("/");
-    totalParts = parseInt(total);
-    parts[parseInt(current)] = body;
+    } catch (e) {
+      continue;
+    }
   }
+
+  reader.clear();
 
   if (!totalParts) {
     alert("لم يتم التعرف على أي باركود صالح.");
@@ -404,38 +445,6 @@ async function decodeMultipleQR() {
 }
 
 /* ============================================================
-   فكّ باركود واحد فقط (استخراج نص من صورة واحدة)
-============================================================ */
-async function decodeSingleQR() {
-  const files = document.getElementById("qrFiles").files;
-  if (!files.length) {
-    alert("اختر صورة QR أولاً.");
-    return;
-  }
-
-  const file = files[0];
-  const text = await scanQRFromImage(file);
-  if (!text) {
-    alert("فشل في قراءة الباركود.");
-    return;
-  }
-
-  const raw = LZString.decompressFromEncodedURIComponent(text);
-  if (!raw) {
-    alert("فشل في فك الضغط.");
-    return;
-  }
-
-  const header = raw.split("|")[0];
-  const body = raw.split("|")[1];
-
-  const decoded = decodeChunk(body);
-
-  document.getElementById("finalOutput").textContent =
-    "المعلومات: " + header + "\n\n" + decoded;
-}
-
-/* ============================================================
    فكّ جزء واحد (نص مشفّر) إلى نص عربي
 ============================================================ */
 function decodeChunk(raw) {
@@ -452,31 +461,6 @@ function decodeChunk(raw) {
   });
 
   return words.join(" ");
-}
-
-/* ============================================================
-   قراءة QR من صورة
-============================================================ */
-function scanQRFromImage(file) {
-  return new Promise(resolve => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-
-      try {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const qr = jsQR(imageData.data, canvas.width, canvas.height);
-        resolve(qr ? qr.data : null);
-      } catch {
-        resolve(null);
-      }
-    };
-    img.src = URL.createObjectURL(file);
-  });
 }
 </script>
 
