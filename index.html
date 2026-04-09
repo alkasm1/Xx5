@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ALM Pro Multi-QR</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #fff;
+  margin: 0;
+}
+
+header {
+  background: #0BA37F;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.container {
+  padding: 20px;
+  max-width: 700px;
+  margin: auto;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  background: #0BA37F;
+  color: white;
+  border: none;
+  border-radius: 8px;
+}
+
+textarea, input {
+  width: 100%;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.screen { display:none; }
+
+#qrCanvas div {
+  display:inline-block;
+  margin:6px;
+  text-align:center;
+}
+
+.small {
+  font-size: 13px;
+  text-align:center;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+
+<body>
+
+<header>ALM PRO — Multi QR</header>
+
+<div class="container">
+
+<div id="screenEncode" class="screen" style="display:block;">
+<textarea id="inputText" rows="5"></textarea>
+<input id="userKey" type="number" value="123456789">
+<button onclick="encode()">تحويل</button>
+<button onclick="goDecode()">فك</button>
+</div>
+
+<div id="screenQR" class="screen">
+<div id="qrCanvas"></div>
+<button onclick="goHome()">رجوع</button>
+</div>
+
+<div id="screenDecode" class="screen">
+<button onclick="scan()">مسح</button>
+<button onclick="resetScan()">إعادة ضبط</button>
+<div id="progress" class="small"></div>
+<div id="decodedText"></div>
+</div>
+
+</div>
+
+<div id="reader" style="display:none;"></div>
+
+<script>
+
+/* ========= إعداد ========= */
+const CHUNK_SIZE = 700;
+let collected = {};
+let totalParts = 0;
+let scanner = null;
+
+/* ========= أدوات ========= */
+function show(id){
+  document.querySelectorAll(".screen").forEach(s=>s.style.display="none");
+  document.getElementById(id).style.display="block";
+}
+
+function goHome(){ show("screenEncode"); }
+function goDecode(){ show("screenDecode"); }
+
+/* ========= checksum ========= */
+function checksum(str){
+  let hash = 0;
+  for (let i=0;i<str.length;i++){
+    hash = ((hash<<5)-hash)+str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+/* ========= تقسيم ========= */
+function splitData(data){
+  const arr=[];
+  for(let i=0;i<data.length;i+=CHUNK_SIZE){
+    arr.push(data.slice(i,i+CHUNK_SIZE));
+  }
+  return arr;
+}
+
+/* ========= encode ========= */
+function encode(){
+  const text = document.getElementById("inputText").value.trim();
+  if(!text) return alert("أدخل نص");
+
+  const compressed = LZString.compressToEncodedURIComponent(text);
+  const chunks = splitData(compressed);
+
+  const total = chunks.length;
+  const sum = checksum(compressed);
+
+  const container = document.getElementById("qrCanvas");
+  container.innerHTML="";
+
+  chunks.forEach((chunk,i)=>{
+
+    const payload = JSON.stringify({
+      i:i+1,
+      t:total,
+      d:chunk,
+      c:sum
+    });
+
+    const wrap = document.createElement("div");
+    const qrDiv = document.createElement("div");
+
+    new QRCode(qrDiv,{
+      text:payload,
+      width:140,
+      height:140,
+      correctLevel:QRCode.CorrectLevel.L
+    });
+
+    const label = document.createElement("div");
+    label.innerText = `${i+1}/${total}`;
+
+    wrap.appendChild(qrDiv);
+    wrap.appendChild(label);
+    container.appendChild(wrap);
+  });
+
+  show("screenQR");
+}
+
+/* ========= scan ========= */
+function scan(){
+  document.getElementById("reader").style.display="block";
+
+  scanner = new Html5Qrcode("reader");
+
+  scanner.start(
+    {facingMode:"environment"},
+    {fps:10, qrbox:250},
+    txt=>{
+      handlePart(txt);
+    }
+  );
+}
+
+/* ========= صوت ========= */
+function beep(){
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  osc.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.1);
+}
+
+/* ========= استقبال جزء ========= */
+function handlePart(text){
+
+  let obj;
+  try{
+    obj = JSON.parse(text);
+  }catch{
+    return;
+  }
+
+  if(collected[obj.i]) return; // منع التكرار
+
+  collected[obj.i] = obj.d;
+  totalParts = obj.t;
+  window.currentChecksum = obj.c;
+
+  beep();
+  updateProgress();
+
+  if(Object.keys(collected).length === totalParts){
+    finish();
+  }
+}
+
+/* ========= progress ========= */
+function updateProgress(){
+  const count = Object.keys(collected).length;
+  document.getElementById("progress").innerText =
+    `تم جمع ${count} / ${totalParts}`;
+}
+
+/* ========= إنهاء ========= */
+function finish(){
+
+  let full="";
+
+  for(let i=1;i<=totalParts;i++){
+    if(!collected[i]) return alert("جزء ناقص");
+    full += collected[i];
+  }
+
+  if(checksum(full) !== window.currentChecksum){
+    alert("خطأ في البيانات");
+    return;
+  }
+
+  const text = LZString.decompressFromEncodedURIComponent(full);
+
+  document.getElementById("decodedText").innerText = text;
+
+  scanner.stop();
+  document.getElementById("reader").style.display="none";
+
+  resetScan();
+}
+
+/* ========= reset ========= */
+function resetScan(){
+  collected = {};
+  totalParts = 0;
+  document.getElementById("progress").innerText="";
+  document.getElementById("decodedText").innerText="";
+}
+
+</script>
+
+</body>
+</html>
