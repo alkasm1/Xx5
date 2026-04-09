@@ -107,13 +107,14 @@ textarea, input[type="number"], input[type="file"] {
 
 <h3>فكّ الباركودات</h3>
 
-<label>اختر عدة صور QR:</label>
+<label>اختر صورة أو عدة صور QR:</label>
 <input type="file" id="qrFiles" accept="image/*" multiple>
 
-<button onclick="decodeMultipleQR()">فكّ جميع الباركودات</button>
+<button onclick="decodeSingleQR()">استخراج نص من صورة واحدة</button>
+<button onclick="decodeMultipleQR()">فكّ جميع الباركودات ودمجها</button>
 
-<h4>النص النهائي:</h4>
-<div id="finalOutput" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:80px;"></div>
+<h4>النص النهائي / النص المستخرج:</h4>
+<div id="finalOutput" style="padding:10px; white-space:pre-wrap; border:1px solid #ccc; border-radius:8px; min-height:80px;"></div>
 
 </div>
 
@@ -281,13 +282,11 @@ async function startEncoding() {
       correctLevel: QRCode.CorrectLevel.M
     });
 
-    /* زر حفظ */
     const saveBtn = document.createElement("button");
     saveBtn.textContent = "حفظ الباركود";
     saveBtn.onclick = () => saveSpecificQR(div);
     box.appendChild(saveBtn);
 
-    /* زر مشاركة */
     const shareBtn = document.createElement("button");
     shareBtn.textContent = "مشاركة الباركود";
     shareBtn.onclick = () => shareSpecificQR(div);
@@ -359,11 +358,14 @@ async function shareSpecificQR(qrDiv) {
 }
 
 /* ============================================================
-   فكّ عدة باركودات
+   فكّ عدة باركودات ودمجها
 ============================================================ */
 async function decodeMultipleQR() {
   const files = document.getElementById("qrFiles").files;
-  if (!files.length) return;
+  if (!files.length) {
+    alert("اختر صور QR أولاً.");
+    return;
+  }
 
   const parts = {};
   let totalParts = 0;
@@ -383,6 +385,11 @@ async function decodeMultipleQR() {
     parts[parseInt(current)] = body;
   }
 
+  if (!totalParts) {
+    alert("لم يتم التعرف على أي باركود صالح.");
+    return;
+  }
+
   let finalText = "";
 
   for (let i = 1; i <= totalParts; i++) {
@@ -396,12 +403,48 @@ async function decodeMultipleQR() {
   document.getElementById("finalOutput").textContent = finalText;
 }
 
+/* ============================================================
+   فكّ باركود واحد فقط (استخراج نص من صورة واحدة)
+============================================================ */
+async function decodeSingleQR() {
+  const files = document.getElementById("qrFiles").files;
+  if (!files.length) {
+    alert("اختر صورة QR أولاً.");
+    return;
+  }
+
+  const file = files[0];
+  const text = await scanQRFromImage(file);
+  if (!text) {
+    alert("فشل في قراءة الباركود.");
+    return;
+  }
+
+  const raw = LZString.decompressFromEncodedURIComponent(text);
+  if (!raw) {
+    alert("فشل في فك الضغط.");
+    return;
+  }
+
+  const header = raw.split("|")[0];
+  const body = raw.split("|")[1];
+
+  const decoded = decodeChunk(body);
+
+  document.getElementById("finalOutput").textContent =
+    "المعلومات: " + header + "\n\n" + decoded;
+}
+
+/* ============================================================
+   فكّ جزء واحد (نص مشفّر) إلى نص عربي
+============================================================ */
 function decodeChunk(raw) {
   const key = BigInt(document.getElementById("userKey").value || "0");
   const freqs36 = raw.split(",");
   const words = [];
 
   freqs36.forEach(f36 => {
+    if (!f36) return;
     const fFull = base36ToBigInt(f36);
     const C2 = (fFull - f0) / df;
     const C  = C2 ^ key;
@@ -411,6 +454,9 @@ function decodeChunk(raw) {
   return words.join(" ");
 }
 
+/* ============================================================
+   قراءة QR من صورة
+============================================================ */
 function scanQRFromImage(file) {
   return new Promise(resolve => {
     const img = new Image();
@@ -422,7 +468,8 @@ function scanQRFromImage(file) {
       ctx.drawImage(img, 0, 0);
 
       try {
-        const qr = jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const qr = jsQR(imageData.data, canvas.width, canvas.height);
         resolve(qr ? qr.data : null);
       } catch {
         resolve(null);
