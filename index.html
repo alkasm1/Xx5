@@ -2,277 +2,380 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>ALM PRO Ultimate</title>
+<title>ALM Multi‑QR Encoder</title>
 
 <style>
-body {font-family:"Cairo",sans-serif;background:#fff;margin:0}
-header {background:#0BA37F;color:#fff;padding:15px;text-align:center;font-weight:bold}
-.container {padding:20px;max-width:700px;margin:auto}
-button {width:100%;padding:12px;margin-top:8px;background:#0BA37F;color:#fff;border:none;border-radius:8px}
-textarea,input {width:100%;padding:10px;margin-top:8px}
-.screen{display:none}
-#qrCanvas div{display:inline-block;margin:6px;text-align:center}
-.small{font-size:13px;text-align:center;color:#666}
+body {
+  font-family: "Cairo", sans-serif;
+  background: #ffffff;
+  color: #222;
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  background: #0BA37F;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.container {
+  padding: 20px;
+  max-width: 700px;
+  margin: auto;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  background: #0BA37F;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0a8c6c;
+}
+
+textarea, input[type="number"], input[type="file"] {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.qr-box {
+  margin: 20px 0;
+  padding: 10px;
+  border: 1px dashed #aaa;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.small {
+  font-size: 13px;
+  color: #666;
+  margin-top: 5px;
+  text-align: center;
+}
 </style>
 
+<!-- QRCode -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode"></script>
+
+<!-- LZ-String -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 
 </head>
 
 <body>
 
-<header>ALM PRO Ultimate</header>
+<header>ALM Multi‑QR Encoder</header>
 
 <div class="container">
 
-<!-- encode -->
-<div id="screenEncode" class="screen" style="display:block;">
-<textarea id="inputText" rows="5"></textarea>
+<h3>إدخال نص أو كتاب</h3>
+
+<textarea id="inputText" rows="5" placeholder="اكتب نصًا هنا (للنصوص القصيرة فقط)..."></textarea>
+
+<label>أو حمّل كتاب PDF:</label>
+<input type="file" id="pdfInput" accept="application/pdf">
+
+<label>مفتاح المستخدم:</label>
 <input id="userKey" type="number" value="123456789">
-<button onclick="encode()">تحويل إلى QR</button>
-<button onclick="goDecode()">فك QR</button>
-</div>
 
-<!-- qr -->
-<div id="screenQR" class="screen">
-<div id="qrCanvas"></div>
-<button onclick="saveQR()">حفظ</button>
-<button onclick="shareQR()">مشاركة</button>
-<button onclick="goHome()">رجوع</button>
-</div>
+<button onclick="startEncoding()">تحويل إلى باركودات متعددة</button>
 
-<!-- decode -->
-<div id="screenDecode" class="screen">
-<button onclick="scan()">مسح بالكاميرا</button>
-<input type="file" id="qrFileInput" accept="image/*">
-<button onclick="decodeFromImage()">رفع صورة</button>
-<button onclick="resetScan()">إعادة ضبط</button>
+<div id="qrList"></div>
 
-<div id="progress" class="small"></div>
+<hr>
 
-<div id="decodedText" style="padding:10px;border:1px solid #ccc;margin-top:10px"></div>
-</div>
+<h3>فكّ الباركودات</h3>
+
+<label>اختر عدة صور QR:</label>
+<input type="file" id="qrFiles" accept="image/*" multiple>
+
+<button onclick="decodeMultipleQR()">فكّ جميع الباركودات</button>
+
+<h4>النص النهائي:</h4>
+<div id="finalOutput" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:80px;"></div>
 
 </div>
-
-<div id="reader" style="display:none"></div>
-<div id="reader-temp" style="display:none"></div>
 
 <script>
+/* ============================================================
+   نواة ALM — نفس المحرك القوي المستخدم سابقًا
+============================================================ */
+const B = 32;
+const LMAX = 12;
+const f0 = 100000n;
+const df = 1n;
 
-/* ========= ALM ========= */
-const B=32,LMAX=12,f0=100000n,df=1n;
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",
+  29:"ء"
+};
 
-const indexToChar={1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"};
-const charToIndex={};for(const[i,ch]of Object.entries(indexToChar)){charToIndex[ch]=+i}
-
-function normalizeArabic(s){
-return s.replace(/[إأآ]/g,"ا").replace(/ى/g,"ي").replace(/ؤ/g,"و").replace(/ئ/g,"ي").replace(/ة/g,"ه").replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"")
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i, 10);
 }
 
-function splitWord(w){let a=[];for(let i=0;i<w.length;i+=LMAX)a.push(w.slice(i,i+LMAX));return a}
-
-function wordToCode(w){
-let c=new Array(LMAX).fill(0),pos=0;
-for(let i=w.length-1;i>=0;i--){let idx=charToIndex[w[i]];if(idx)c[pos++]=idx}
-let C=0n;
-for(let i=0;i<LMAX;i++)C+=BigInt(c[i])*(BigInt(B)**BigInt(i));
-return C;
+function normalizeArabic(s) {
+  return (s || "")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g, "");
 }
 
-function codeToWord(C){
-let digits=[],c=BigInt(C);
-for(let i=0;i<LMAX;i++){digits.push(Number(c%BigInt(B)));c/=BigInt(B)}
-let w="";for(let i=LMAX-1;i>=0;i--)w+=indexToChar[digits[i]]||"";return w
+function bigIntToBase36(n) { return n.toString(36); }
+
+function base36ToBigInt(str) {
+  let res = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
 }
 
-function bigIntToBase36(n){return n.toString(36)}
-function base36ToBigInt(s){let r=0n;for(let ch of s)r=r*36n+BigInt(parseInt(ch,36));return r}
-
-/* ========= Multi QR ========= */
-const CHUNK_SIZE=700;
-let collected={},totalParts=0,checksumVal=0,scanner=null;
-
-function checksum(str){let h=0;for(let i=0;i<str.length;i++){h=((h<<5)-h)+str.charCodeAt(i);h|=0}return h}
-
-function splitData(d){let a=[];for(let i=0;i<d.length;i+=CHUNK_SIZE)a.push(d.slice(i,i+CHUNK_SIZE));return a}
-
-/* ========= navigation ========= */
-function show(id){document.querySelectorAll(".screen").forEach(s=>s.style.display="none");document.getElementById(id).style.display="block"}
-function goHome(){show("screenEncode")}
-function goDecode(){show("screenDecode")}
-
-/* ========= encode ========= */
-function encode(){
-let key=BigInt(document.getElementById("userKey").value||0);
-let txt=normalizeArabic(document.getElementById("inputText").value.trim());
-if(!txt)return alert("أدخل نص");
-
-let freqs=[];
-txt.split(/\s+/).forEach(w=>{
-splitWord(w).forEach(b=>{
-let C=wordToCode(b);
-let C2=C^key;
-let f=f0+C2*df;
-freqs.push(bigIntToBase36(f));
-})
-});
-
-let raw=freqs.join(".");
-let comp=LZString.compressToEncodedURIComponent(raw);
-
-let chunks=splitData(comp);
-let total=chunks.length;
-let sum=checksum(comp);
-
-let container=document.getElementById("qrCanvas");
-container.innerHTML="";
-
-chunks.forEach((ch,i)=>{
-let payload=JSON.stringify({i:i+1,t:total,d:ch,c:sum});
-
-let wrap=document.createElement("div");
-let qr=document.createElement("div");
-
-new QRCode(qr,{text:payload,width:140,height:140,correctLevel:QRCode.CorrectLevel.L});
-
-let label=document.createElement("div");
-label.innerText=`${i+1}/${total}`;
-
-wrap.appendChild(qr);
-wrap.appendChild(label);
-container.appendChild(wrap);
-});
-
-show("screenQR");
+function splitWord(word) {
+  const blocks = [];
+  for (let i = 0; i < word.length; i += LMAX) {
+    blocks.push(word.slice(i, i + LMAX));
+  }
+  return blocks;
 }
 
-/* ========= scan ========= */
-function scan(){
-document.getElementById("reader").style.display="block";
-scanner=new Html5Qrcode("reader");
-scanner.start({facingMode:"environment"},{fps:10,qrbox:250},txt=>handlePart(txt));
+function wordToCode(word){
+  const c = new Array(LMAX).fill(0);
+  let pos = 0;
+
+  for (let i = word.length - 1; i >= 0; i--){
+    const idx = charToIndex[word[i]];
+    if (idx === undefined) continue;
+    c[pos++] = idx;
+  }
+
+  let C = 0n;
+  for (let i = 0; i < LMAX; i++){
+    C += BigInt(c[i]) * (BigInt(B) ** BigInt(i));
+  }
+  return C;
 }
 
-/* ========= beep ========= */
-function beep(){
-let ctx=new AudioContext();
-let o=ctx.createOscillator();
-o.connect(ctx.destination);
-o.start();
-o.stop(ctx.currentTime+0.1);
+function codeToWord(Cbig){
+  let C = BigInt(Cbig);
+  const digits = [];
+
+  for (let i = 0; i < LMAX; i++){
+    digits.push(Number(C % BigInt(B)));
+    C /= BigInt(B);
+  }
+
+  let w = "";
+  for (let i = LMAX - 1; i >= 0; i--){
+    w += indexToChar[digits[i]] || "";
+  }
+  return w;
 }
 
-/* ========= handle ========= */
-function handlePart(text){
-let obj;
-try{obj=JSON.parse(text)}catch{return}
+/* ============================================================
+   استخراج نص PDF
+============================================================ */
+async function extractPDFText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-if(collected[obj.i])return;
+  let fullText = "";
 
-collected[obj.i]=obj.d;
-totalParts=obj.t;
-checksumVal=obj.c;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const strings = content.items.map(item => item.str).join(" ");
+    fullText += strings + " ";
+  }
 
-beep();
-updateProgress();
-
-if(Object.keys(collected).length===totalParts)finish();
+  return normalizeArabic(fullText);
 }
 
-/* ========= progress ========= */
-function updateProgress(){
-document.getElementById("progress").innerText=`${Object.keys(collected).length}/${totalParts}`;
+/* ============================================================
+   التقسيم الذكي
+============================================================ */
+function smartSplit(text) {
+  const words = text.split(/\s+/);
+  const chunks = [];
+  let current = [];
+
+  for (let w of words) {
+    current.push(w);
+    if (current.length >= 250) {
+      chunks.push(current.join(" "));
+      current = [];
+    }
+  }
+
+  if (current.length > 0) chunks.push(current.join(" "));
+  return chunks;
 }
 
-/* ========= finish ========= */
-function finish(){
-let full="";
-for(let i=1;i<=totalParts;i++){
-if(!collected[i])return alert("جزء ناقص");
-full+=collected[i];
+/* ============================================================
+   الترميز إلى عدة باركودات
+============================================================ */
+async function startEncoding() {
+  const key = BigInt(document.getElementById("userKey").value || "0");
+
+  let text = document.getElementById("inputText").value.trim();
+
+  const pdfFile = document.getElementById("pdfInput").files[0];
+  if (pdfFile) {
+    text = await extractPDFText(pdfFile);
+  }
+
+  if (!text) {
+    alert("لا يوجد نص.");
+    return;
+  }
+
+  const chunks = smartSplit(text);
+  const total = chunks.length;
+
+  document.getElementById("qrList").innerHTML = "";
+
+  for (let i = 0; i < total; i++) {
+    const encoded = encodeChunk(chunks[i], key);
+    const header = `part=${i+1}/${total}|`;
+    const compressed = LZString.compressToEncodedURIComponent(header + encoded);
+
+    const box = document.createElement("div");
+    box.className = "qr-box";
+    box.innerHTML = `<h4>الجزء ${i+1} من ${total}</h4>`;
+    const div = document.createElement("div");
+    box.appendChild(div);
+
+    new QRCode(div, {
+      text: compressed,
+      width: 240,
+      height: 240,
+      correctLevel: QRCode.CorrectLevel.M
+    });
+
+    document.getElementById("qrList").appendChild(box);
+  }
 }
 
-if(checksum(full)!==checksumVal)return alert("خطأ في البيانات");
+function encodeChunk(text, key) {
+  const words = text.split(/\s+/);
+  const freqs36 = [];
 
-let raw=LZString.decompressFromEncodedURIComponent(full);
-if(!raw)return alert("فشل فك الضغط");
+  words.forEach(word => {
+    const blocks = splitWord(word);
+    blocks.forEach(block => {
+      const C  = wordToCode(block);
+      const C2 = C ^ key;
+      const fFull = f0 + C2 * df;
+      freqs36.push(bigIntToBase36(fFull));
+    });
+  });
 
-decodeRaw(raw);
-
-scanner.stop();
-document.getElementById("reader").style.display="none";
+  return freqs36.join(",");
 }
 
-/* ========= decode ALM ========= */
-function decodeRaw(raw){
-let key=BigInt(document.getElementById("userKey").value||0);
-let words=[];
+/* ============================================================
+   فكّ عدة باركودات
+============================================================ */
+async function decodeMultipleQR() {
+  const files = document.getElementById("qrFiles").files;
+  if (!files.length) return;
 
-raw.split(".").forEach(f36=>{
-if(!f36)return;
-let f=base36ToBigInt(f36);
-let C2=(f-f0)/df;
-let C=C2^key;
-words.push(codeToWord(C));
-});
+  const parts = {};
+  let totalParts = 0;
 
-document.getElementById("decodedText").innerText=words.join(" ");
+  for (let file of files) {
+    const text = await scanQRFromImage(file);
+    if (!text) continue;
+
+    const raw = LZString.decompressFromEncodedURIComponent(text);
+    if (!raw) continue;
+
+    const header = raw.split("|")[0];
+    const body = raw.split("|")[1];
+
+    const [current, total] = header.replace("part=","").split("/");
+    totalParts = parseInt(total);
+    parts[parseInt(current)] = body;
+  }
+
+  let finalText = "";
+
+  for (let i = 1; i <= totalParts; i++) {
+    if (parts[i]) {
+      finalText += decodeChunk(parts[i]) + " ";
+    } else {
+      finalText += "[... جزء مفقود ...] ";
+    }
+  }
+
+  document.getElementById("finalOutput").textContent = finalText;
 }
 
-/* ========= reset ========= */
-function resetScan(){
-collected={};
-totalParts=0;
-document.getElementById("progress").innerText="";
-document.getElementById("decodedText").innerText="";
+function decodeChunk(raw) {
+  const key = BigInt(document.getElementById("userKey").value || "0");
+  const freqs36 = raw.split(",");
+  const words = [];
+
+  freqs36.forEach(f36 => {
+    const fFull = base36ToBigInt(f36);
+    const C2 = (fFull - f0) / df;
+    const C  = C2 ^ key;
+    words.push(codeToWord(C));
+  });
+
+  return words.join(" ");
 }
 
-/* ========= image decode ========= */
-async function decodeFromImage(){
-let file=document.getElementById("qrFileInput").files[0];
-if(!file)return;
+function scanQRFromImage(file) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
 
-let html5Qr=new Html5Qrcode("reader-temp");
-try{
-let txt=await html5Qr.scanFile(file,true);
-handlePart(txt);
-}catch{alert("فشل القراءة")}
+      try {
+        const qr = jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        resolve(qr ? qr.data : null);
+      } catch {
+        resolve(null);
+      }
+    };
+    img.src = URL.createObjectURL(file);
+  });
 }
-
-/* ========= save ========= */
-function getQRDataURL(){
-let canvas=document.querySelector("#qrCanvas canvas");
-if(canvas)return canvas.toDataURL();
-return null;
-}
-
-function saveQR(){
-let url=getQRDataURL();
-if(!url)return;
-let a=document.createElement("a");
-a.href=url;
-a.download="qr.png";
-a.click();
-}
-
-/* ========= share ========= */
-async function shareQR(){
-let url=getQRDataURL();
-if(!url)return;
-
-let res=await fetch(url);
-let blob=await res.blob();
-let file=new File([blob],"qr.png",{type:"image/png"});
-
-if(navigator.canShare && navigator.canShare({files:[file]})){
-navigator.share({files:[file]});
-}else alert("غير مدعوم");
-}
-
 </script>
+
+<!-- jsQR -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.min.js"></script>
 
 </body>
 </html>
