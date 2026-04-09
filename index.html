@@ -2,57 +2,17 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>ALM Pro Multi-QR</title>
+<title>ALM PRO Ultimate</title>
 
 <style>
-body {
-  font-family: "Cairo", sans-serif;
-  background: #fff;
-  margin: 0;
-}
-
-header {
-  background: #0BA37F;
-  color: white;
-  padding: 15px;
-  text-align: center;
-  font-weight: bold;
-}
-
-.container {
-  padding: 20px;
-  max-width: 700px;
-  margin: auto;
-}
-
-button {
-  width: 100%;
-  padding: 14px;
-  margin-top: 10px;
-  background: #0BA37F;
-  color: white;
-  border: none;
-  border-radius: 8px;
-}
-
-textarea, input {
-  width: 100%;
-  padding: 10px;
-  margin-top: 10px;
-}
-
-.screen { display:none; }
-
-#qrCanvas div {
-  display:inline-block;
-  margin:6px;
-  text-align:center;
-}
-
-.small {
-  font-size: 13px;
-  text-align:center;
-}
+body {font-family:"Cairo",sans-serif;background:#fff;margin:0}
+header {background:#0BA37F;color:#fff;padding:15px;text-align:center;font-weight:bold}
+.container {padding:20px;max-width:700px;margin:auto}
+button {width:100%;padding:12px;margin-top:8px;background:#0BA37F;color:#fff;border:none;border-radius:8px}
+textarea,input {width:100%;padding:10px;margin-top:8px}
+.screen{display:none}
+#qrCanvas div{display:inline-block;margin:6px;text-align:center}
+.small{font-size:13px;text-align:center;color:#666}
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -63,199 +23,253 @@ textarea, input {
 
 <body>
 
-<header>ALM PRO — Multi QR</header>
+<header>ALM PRO Ultimate</header>
 
 <div class="container">
 
+<!-- encode -->
 <div id="screenEncode" class="screen" style="display:block;">
 <textarea id="inputText" rows="5"></textarea>
 <input id="userKey" type="number" value="123456789">
-<button onclick="encode()">تحويل</button>
-<button onclick="goDecode()">فك</button>
+<button onclick="encode()">تحويل إلى QR</button>
+<button onclick="goDecode()">فك QR</button>
 </div>
 
+<!-- qr -->
 <div id="screenQR" class="screen">
 <div id="qrCanvas"></div>
+<button onclick="saveQR()">حفظ</button>
+<button onclick="shareQR()">مشاركة</button>
 <button onclick="goHome()">رجوع</button>
 </div>
 
+<!-- decode -->
 <div id="screenDecode" class="screen">
-<button onclick="scan()">مسح</button>
+<button onclick="scan()">مسح بالكاميرا</button>
+<input type="file" id="qrFileInput" accept="image/*">
+<button onclick="decodeFromImage()">رفع صورة</button>
 <button onclick="resetScan()">إعادة ضبط</button>
+
 <div id="progress" class="small"></div>
-<div id="decodedText"></div>
+
+<div id="decodedText" style="padding:10px;border:1px solid #ccc;margin-top:10px"></div>
 </div>
 
 </div>
 
-<div id="reader" style="display:none;"></div>
+<div id="reader" style="display:none"></div>
+<div id="reader-temp" style="display:none"></div>
 
 <script>
 
-/* ========= إعداد ========= */
-const CHUNK_SIZE = 700;
-let collected = {};
-let totalParts = 0;
-let scanner = null;
+/* ========= ALM ========= */
+const B=32,LMAX=12,f0=100000n,df=1n;
 
-/* ========= أدوات ========= */
-function show(id){
-  document.querySelectorAll(".screen").forEach(s=>s.style.display="none");
-  document.getElementById(id).style.display="block";
+const indexToChar={1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"};
+const charToIndex={};for(const[i,ch]of Object.entries(indexToChar)){charToIndex[ch]=+i}
+
+function normalizeArabic(s){
+return s.replace(/[إأآ]/g,"ا").replace(/ى/g,"ي").replace(/ؤ/g,"و").replace(/ئ/g,"ي").replace(/ة/g,"ه").replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"")
 }
 
-function goHome(){ show("screenEncode"); }
-function goDecode(){ show("screenDecode"); }
+function splitWord(w){let a=[];for(let i=0;i<w.length;i+=LMAX)a.push(w.slice(i,i+LMAX));return a}
 
-/* ========= checksum ========= */
-function checksum(str){
-  let hash = 0;
-  for (let i=0;i<str.length;i++){
-    hash = ((hash<<5)-hash)+str.charCodeAt(i);
-    hash |= 0;
-  }
-  return hash;
+function wordToCode(w){
+let c=new Array(LMAX).fill(0),pos=0;
+for(let i=w.length-1;i>=0;i--){let idx=charToIndex[w[i]];if(idx)c[pos++]=idx}
+let C=0n;
+for(let i=0;i<LMAX;i++)C+=BigInt(c[i])*(BigInt(B)**BigInt(i));
+return C;
 }
 
-/* ========= تقسيم ========= */
-function splitData(data){
-  const arr=[];
-  for(let i=0;i<data.length;i+=CHUNK_SIZE){
-    arr.push(data.slice(i,i+CHUNK_SIZE));
-  }
-  return arr;
+function codeToWord(C){
+let digits=[],c=BigInt(C);
+for(let i=0;i<LMAX;i++){digits.push(Number(c%BigInt(B)));c/=BigInt(B)}
+let w="";for(let i=LMAX-1;i>=0;i--)w+=indexToChar[digits[i]]||"";return w
 }
+
+function bigIntToBase36(n){return n.toString(36)}
+function base36ToBigInt(s){let r=0n;for(let ch of s)r=r*36n+BigInt(parseInt(ch,36));return r}
+
+/* ========= Multi QR ========= */
+const CHUNK_SIZE=700;
+let collected={},totalParts=0,checksumVal=0,scanner=null;
+
+function checksum(str){let h=0;for(let i=0;i<str.length;i++){h=((h<<5)-h)+str.charCodeAt(i);h|=0}return h}
+
+function splitData(d){let a=[];for(let i=0;i<d.length;i+=CHUNK_SIZE)a.push(d.slice(i,i+CHUNK_SIZE));return a}
+
+/* ========= navigation ========= */
+function show(id){document.querySelectorAll(".screen").forEach(s=>s.style.display="none");document.getElementById(id).style.display="block"}
+function goHome(){show("screenEncode")}
+function goDecode(){show("screenDecode")}
 
 /* ========= encode ========= */
 function encode(){
-  const text = document.getElementById("inputText").value.trim();
-  if(!text) return alert("أدخل نص");
+let key=BigInt(document.getElementById("userKey").value||0);
+let txt=normalizeArabic(document.getElementById("inputText").value.trim());
+if(!txt)return alert("أدخل نص");
 
-  const compressed = LZString.compressToEncodedURIComponent(text);
-  const chunks = splitData(compressed);
+let freqs=[];
+txt.split(/\s+/).forEach(w=>{
+splitWord(w).forEach(b=>{
+let C=wordToCode(b);
+let C2=C^key;
+let f=f0+C2*df;
+freqs.push(bigIntToBase36(f));
+})
+});
 
-  const total = chunks.length;
-  const sum = checksum(compressed);
+let raw=freqs.join(".");
+let comp=LZString.compressToEncodedURIComponent(raw);
 
-  const container = document.getElementById("qrCanvas");
-  container.innerHTML="";
+let chunks=splitData(comp);
+let total=chunks.length;
+let sum=checksum(comp);
 
-  chunks.forEach((chunk,i)=>{
+let container=document.getElementById("qrCanvas");
+container.innerHTML="";
 
-    const payload = JSON.stringify({
-      i:i+1,
-      t:total,
-      d:chunk,
-      c:sum
-    });
+chunks.forEach((ch,i)=>{
+let payload=JSON.stringify({i:i+1,t:total,d:ch,c:sum});
 
-    const wrap = document.createElement("div");
-    const qrDiv = document.createElement("div");
+let wrap=document.createElement("div");
+let qr=document.createElement("div");
 
-    new QRCode(qrDiv,{
-      text:payload,
-      width:140,
-      height:140,
-      correctLevel:QRCode.CorrectLevel.L
-    });
+new QRCode(qr,{text:payload,width:140,height:140,correctLevel:QRCode.CorrectLevel.L});
 
-    const label = document.createElement("div");
-    label.innerText = `${i+1}/${total}`;
+let label=document.createElement("div");
+label.innerText=`${i+1}/${total}`;
 
-    wrap.appendChild(qrDiv);
-    wrap.appendChild(label);
-    container.appendChild(wrap);
-  });
+wrap.appendChild(qr);
+wrap.appendChild(label);
+container.appendChild(wrap);
+});
 
-  show("screenQR");
+show("screenQR");
 }
 
 /* ========= scan ========= */
 function scan(){
-  document.getElementById("reader").style.display="block";
-
-  scanner = new Html5Qrcode("reader");
-
-  scanner.start(
-    {facingMode:"environment"},
-    {fps:10, qrbox:250},
-    txt=>{
-      handlePart(txt);
-    }
-  );
+document.getElementById("reader").style.display="block";
+scanner=new Html5Qrcode("reader");
+scanner.start({facingMode:"environment"},{fps:10,qrbox:250},txt=>handlePart(txt));
 }
 
-/* ========= صوت ========= */
+/* ========= beep ========= */
 function beep(){
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  osc.connect(ctx.destination);
-  osc.start();
-  osc.stop(ctx.currentTime + 0.1);
+let ctx=new AudioContext();
+let o=ctx.createOscillator();
+o.connect(ctx.destination);
+o.start();
+o.stop(ctx.currentTime+0.1);
 }
 
-/* ========= استقبال جزء ========= */
+/* ========= handle ========= */
 function handlePart(text){
+let obj;
+try{obj=JSON.parse(text)}catch{return}
 
-  let obj;
-  try{
-    obj = JSON.parse(text);
-  }catch{
-    return;
-  }
+if(collected[obj.i])return;
 
-  if(collected[obj.i]) return; // منع التكرار
+collected[obj.i]=obj.d;
+totalParts=obj.t;
+checksumVal=obj.c;
 
-  collected[obj.i] = obj.d;
-  totalParts = obj.t;
-  window.currentChecksum = obj.c;
+beep();
+updateProgress();
 
-  beep();
-  updateProgress();
-
-  if(Object.keys(collected).length === totalParts){
-    finish();
-  }
+if(Object.keys(collected).length===totalParts)finish();
 }
 
 /* ========= progress ========= */
 function updateProgress(){
-  const count = Object.keys(collected).length;
-  document.getElementById("progress").innerText =
-    `تم جمع ${count} / ${totalParts}`;
+document.getElementById("progress").innerText=`${Object.keys(collected).length}/${totalParts}`;
 }
 
-/* ========= إنهاء ========= */
+/* ========= finish ========= */
 function finish(){
+let full="";
+for(let i=1;i<=totalParts;i++){
+if(!collected[i])return alert("جزء ناقص");
+full+=collected[i];
+}
 
-  let full="";
+if(checksum(full)!==checksumVal)return alert("خطأ في البيانات");
 
-  for(let i=1;i<=totalParts;i++){
-    if(!collected[i]) return alert("جزء ناقص");
-    full += collected[i];
-  }
+let raw=LZString.decompressFromEncodedURIComponent(full);
+if(!raw)return alert("فشل فك الضغط");
 
-  if(checksum(full) !== window.currentChecksum){
-    alert("خطأ في البيانات");
-    return;
-  }
+decodeRaw(raw);
 
-  const text = LZString.decompressFromEncodedURIComponent(full);
+scanner.stop();
+document.getElementById("reader").style.display="none";
+}
 
-  document.getElementById("decodedText").innerText = text;
+/* ========= decode ALM ========= */
+function decodeRaw(raw){
+let key=BigInt(document.getElementById("userKey").value||0);
+let words=[];
 
-  scanner.stop();
-  document.getElementById("reader").style.display="none";
+raw.split(".").forEach(f36=>{
+if(!f36)return;
+let f=base36ToBigInt(f36);
+let C2=(f-f0)/df;
+let C=C2^key;
+words.push(codeToWord(C));
+});
 
-  resetScan();
+document.getElementById("decodedText").innerText=words.join(" ");
 }
 
 /* ========= reset ========= */
 function resetScan(){
-  collected = {};
-  totalParts = 0;
-  document.getElementById("progress").innerText="";
-  document.getElementById("decodedText").innerText="";
+collected={};
+totalParts=0;
+document.getElementById("progress").innerText="";
+document.getElementById("decodedText").innerText="";
+}
+
+/* ========= image decode ========= */
+async function decodeFromImage(){
+let file=document.getElementById("qrFileInput").files[0];
+if(!file)return;
+
+let html5Qr=new Html5Qrcode("reader-temp");
+try{
+let txt=await html5Qr.scanFile(file,true);
+handlePart(txt);
+}catch{alert("فشل القراءة")}
+}
+
+/* ========= save ========= */
+function getQRDataURL(){
+let canvas=document.querySelector("#qrCanvas canvas");
+if(canvas)return canvas.toDataURL();
+return null;
+}
+
+function saveQR(){
+let url=getQRDataURL();
+if(!url)return;
+let a=document.createElement("a");
+a.href=url;
+a.download="qr.png";
+a.click();
+}
+
+/* ========= share ========= */
+async function shareQR(){
+let url=getQRDataURL();
+if(!url)return;
+
+let res=await fetch(url);
+let blob=await res.blob();
+let file=new File([blob],"qr.png",{type:"image/png"});
+
+if(navigator.canShare && navigator.canShare({files:[file]})){
+navigator.share({files:[file]});
+}else alert("غير مدعوم");
 }
 
 </script>
