@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ALM v3 — Multi‑QR Document Encoding</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #ffffff;
+  color: #222;
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  background: #0BA37F;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.container {
+  padding: 20px;
+  max-width: 700px;
+  margin: auto;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  background: #0BA37F;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0a8c6c;
+}
+
+textarea, input[type="number"], input[type="file"] {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.screen {
+  display: none;
+}
+
+#qrCanvas {
+  margin: 20px auto;
+  width: 260px;
+  height: 260px;
+  text-align: center;
+}
+
+.small {
+  font-size: 13px;
+  color: #666;
+  margin-top: 5px;
+  text-align: center;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+
+<body>
+
+<header>ALM v3 — Multi‑QR Document Encoding</header>
+
+<div class="container">
+
+<!-- شاشة الترميز -->
+<div id="screenEncode" class="screen" style="display:block;">
+  <h3>ترميز مستند كامل إلى عدة باركودات (ALM v3)</h3>
+
+  <textarea id="inputText" rows="7" placeholder="ألصق هنا نصًا طويلًا أو كتابًا كاملاً..."></textarea>
+
+  <label>مفتاح المستخدم (هوية المرسل):</label>
+  <input id="userKey" type="number" value="123456789">
+
+  <button onclick="encodeDocumentToQRs()">تحويل المستند إلى باركودات</button>
+  <button onclick="goToDecode()">فكّ باركود</button>
+
+  <p class="small">ALM v3 — يدعم المستندات الطويلة، التقسيم، الدمج، والتحقق من سلامة البيانات.</p>
+</div>
+
+<!-- شاشة عرض QR -->
+<div id="screenQR" class="screen">
+  <h3>باركود المستند — جزء <span id="partNumber"></span></h3>
+
+  <div id="qrCanvas"></div>
+
+  <button onclick="prevQR()">السابق</button>
+  <button onclick="nextQR()">التالي</button>
+
+  <button onclick="saveQR()">حفظ</button>
+  <button onclick="shareQR()">مشاركة</button>
+  <button onclick="goHome()">رجوع</button>
+
+  <p class="small">هذا المستند يحتوي على عدة باركودات — امسحها كلها لإعادة بناء النص.</p>
+</div>
+
+<!-- شاشة فكّ QR -->
+<div id="screenDecode" class="screen">
+  <h3>فكّ باركود (ALM v3)</h3>
+
+  <button onclick="scanQR()">مسح بالكاميرا</button>
+
+  <input type="file" id="qrFileInput" accept="image/*">
+  <button onclick="decodeFromQRImage()">تحميل صورة باركود</button>
+
+  <textarea id="qrInput" rows="3" placeholder="ألصق هنا نص الباركود..."></textarea>
+  <button onclick="decodeFromQR_v3()">فكّ</button>
+
+  <h4>النص المستخرج:</h4>
+  <div id="decodedText" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:60px;"></div>
+
+  <h4>هوية المرسل:</h4>
+  <div id="decodedIdentity" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <h4>سلامة الجزء:</h4>
+  <div id="decodedIntegrity" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <h4>بيانات إضافية:</h4>
+  <div id="decodedMeta" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <h4>إعادة بناء المستند:</h4>
+  <div id="mergeStatus" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <button onclick="goHome()">رجوع</button>
+</div>
+
+</div>
+
+<div id="reader" style="display:none;"></div>
+
+<script>
+/* ============================================================
+   نواة ALM — نفس نواة v2
+   ============================================================ */
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"
+};
+
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i);
+}
+
+function normalizeArabic(s){
+  return (s||"")
+  .replace(/[إأآ]/g,"ا")
+  .replace(/ى/g,"ي")
+  .replace(/ؤ/g,"و")
+  .replace(/ئ/g,"ي")
+  .replace(/ة/g,"ه")
+  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"")
+  .replace(/\s+/g," ").trim();
+}
+
+function wordToCode(word){
+  let C = 0n;
+  for(let i=0;i<word.length;i++){
+    const idx = charToIndex[word[i]] || 0;
+    C += BigInt(idx) * (32n ** BigInt(i));
+  }
+  return C;
+}
+
+function codeToWord(C){
+  let chars = [];
+  for(let i=0;i<32;i++){
+    const idx = Number(C % 32n);
+    C /= 32n;
+    if (idx === 0) break;
+    chars.push(indexToChar[idx] || "");
+    if (C === 0n) break;
+  }
+  return chars.join("");
+}
+
+function base36ToBigInt(str){
+  let res = 0n;
+  for (let i = 0; i < str.length; i++){
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
+}
+
+function simpleChecksum(str){
+  let sum = 0;
+  for (let i = 0; i < str.length; i++){
+    sum = (sum + str.charCodeAt(i) * (i + 1)) % 1000000007;
+  }
+  return sum.toString();
+}
+
+/* ============================================================
+   تقسيم النص إلى أجزاء مناسبة للباركود
+   ============================================================ */
+function splitTextToChunks(text){
+  const words = text.split(" ");
+  const chunks = [];
+  let current = [];
+  let currentLen = 0;
+
+  for (const w of words){
+    const estimatedLen = w.length + 1;
+    if (currentLen + estimatedLen > 2000 && current.length > 0){
+      chunks.push(current.join(" "));
+      current = [w];
+      currentLen = estimatedLen;
+    } else {
+      current.push(w);
+      currentLen += estimatedLen;
+    }
+  }
+  if (current.length > 0) chunks.push(current.join(" "));
+  return chunks;
+}
+
+/* ============================================================
+   ترميز جزء واحد إلى باركود ALM v3
+   ============================================================ */
+function encodeChunk(textChunk, keyBigInt, docId, partIndex, partsCount, globalChecksum){
+  const words = textChunk.split(" ");
+  const f0 = 100000n;
+
+  const encodedWords = words.map(w=>{
+    const C = wordToCode(w) ^ keyBigInt;
+    return (f0 + C).toString(36);
+  });
+
+  const chunkChecksum = simpleChecksum(textChunk);
+
+  const payload = {
+    alm_version: "3.0",
+    encoding: "ALM32-BASE36-LZ",
+    docId: docId,
+    partIndex: partIndex,
+    partsCount: partsCount,
+    text: encodedWords.join(","),
+    identity: keyBigInt.toString(),
+    chunkChecksum: chunkChecksum,
+    globalChecksum: globalChecksum,
+    meta: {
+      ts: Date.now(),
+      device: "web-client",
+      lang: "ar",
+      normalized: true
+    }
+  };
+
+  return LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+}
+
+/* ============================================================
+   ترميز مستند كامل إلى عدة باركودات
+   ============================================================ */
+function encodeDocumentToQRs(){
+  const rawText = document.getElementById("inputText").value.trim();
+  const text = normalizeArabic(rawText);
+  const keyStr = document.getElementById("userKey").value || "0";
+
+  if (!text){
+    alert("أدخل نصًا أولاً.");
+    return;
+  }
+
+  let key;
+  try { key = BigInt(keyStr); }
+  catch(e){ alert("مفتاح غير صالح."); return; }
+
+  const globalChecksum = simpleChecksum(text);
+  const docId = "DOC-" + Date.now();
+
+  const chunks = splitTextToChunks(text);
+  const partsCount = chunks.length;
+
+  window.ALMv3 = {
+    docId,
+    key: key.toString(),
+    globalChecksum,
+    chunks,
+    partsCount,
+    payloads: chunks.map((chunk, idx)=>encodeChunk(chunk, key, docId, idx, partsCount, globalChecksum)),
+    currentIndex: 0
+  };
+
+  showQRPart(0);
+  showScreen("screenQR");
+}
+
+/* ============================================================
+   عرض جزء معين من المستند
+   ============================================================ */
+function showQRPart(index){
+  const doc = window.ALMv3;
+  if (!doc) return;
+  if (index < 0 || index >= doc.partsCount) return;
+
+  const payload = doc.payloads[index];
+  document.getElementById("qrCanvas").innerHTML = "";
+  new QRCode(document.getElementById("qrCanvas"), {
+    text: payload,
+    width: 260,
+    height: 260
+  });
+
+  document.getElementById("partNumber").textContent =
+    (index+1) + " / " + doc.partsCount;
+
+  doc.currentIndex = index;
+}
+
+function nextQR(){ showQRPart(window.ALMv3.currentIndex + 1); }
+function prevQR(){ showQRPart(window.ALMv3.currentIndex - 1); }
+
+/* ============================================================
+   فكّ باركود واحد من ALM v3
+   ============================================================ */
+function decodeALMv3Payload(data){
+  const json = LZString.decompressFromEncodedURIComponent(data);
+  if (!json) throw new Error("باركود غير صالح.");
+
+  const payload = JSON.parse(json);
+
+  if (payload.alm_version !== "3.0")
+    throw new Error("هذا ليس باركود ALM v3.");
+
+  let key = BigInt(payload.identity);
+
+  const f0 = 100000n;
+  const parts = payload.text.split(",");
+  const words = parts.map(p=>{
+    const f = base36ToBigInt(p);
+    const C = (f - f0) ^ key;
+    return codeToWord(C);
+  });
+
+  const decodedText = words.join(" ");
+  const chunkOk = (payload.chunkChecksum === simpleChecksum(decodedText));
+
+  return {payload, decodedText, chunkOk};
+}
+
+/* ============================================================
+   فكّ باركود واحد
+   ============================================================ */
+function decodeFromQR_v3(){
+  const data = document.getElementById("qrInput").value.trim();
+  if (!data){ alert("أدخل باركود."); return; }
+
+  let result;
+  try { result = decodeALMv3Payload(data); }
+  catch(e){ alert(e.message); return; }
+
+  const {payload, decodedText, chunkOk} = result;
+
+  document.getElementById("decodedText").textContent = decodedText;
+  document.getElementById("decodedIdentity").textContent =
+    "User Key: " + payload.identity +
+    " — DocId: " + payload.docId +
+    " — جزء " + (payload.partIndex+1) + " من " + payload.partsCount;
+
+  document.getElementById("decodedIntegrity").textContent =
+    chunkOk ? "✔ الجزء سليم" : "⚠ الجزء غير مطابق";
+
+  document.getElementById("decodedMeta").textContent =
+    "وقت الإرسال: " + new Date(payload.meta.ts).toLocaleString();
+
+  mergeDocument(payload.docId, payload.partIndex, decodedText, payload.partsCount, payload.globalChecksum);
+}
+
+/* ============================================================
+   دمج المستند تلقائيًا عند فكّ كل الأجزاء
+   ============================================================ */
+window.ALMv3_merge = {};
+
+function mergeDocument(docId, partIndex, text, partsCount, globalChecksum){
+  if (!window.ALMv3_merge[docId]){
+    window.ALMv3_merge[docId] = {
+      parts: Array(partsCount).fill(null),
+      globalChecksum
+    };
+  }
+
+  const doc = window.ALMv3_merge[docId];
+  doc.parts[partIndex] = text;
+
+  const filled = doc.parts.filter(x=>x!==null).length;
+
+  if (filled === partsCount){
+    const fullText = doc.parts.join(" ");
+    const ok = (simpleChecksum(fullText) === globalChecksum);
+
+    document.getElementById("mergeStatus").textContent =
+      ok ? "✔ تم دمج المستند بالكامل وهو سليم." :
+           "⚠ تم دمج المستند لكن سلامته غير مؤكدة.";
+
+  } else {
+    document.getElementById("mergeStatus").textContent =
+      "تم استلام " + filled + " من " + partsCount + " أجزاء...";
+  }
+}
+
+/* ============================================================
+   مسح QR بالكاميرا
+   ============================================================ */
+function scanQR(){
+  const html5Qr = new Html5Qrcode("reader");
+
+  html5Qr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    decoded => {
+      document.getElementById("qrInput").value = decoded;
+      html5Qr.stop();
+    }
+  );
+}
+
+/* ============================================================
+   فكّ باركود من صورة
+   ============================================================ */
+async function decodeFromQRImage(){
+  const file = document.getElementById("qrFileInput").files[0];
+  if (!file){ alert("اختر صورة."); return; }
+
+  const html5Qr = new Html5Qrcode("reader");
+
+  try {
+    const result = await html5Qr.scanFile(file, true);
+    document.getElementById("qrInput").value = result;
+    decodeFromQR_v3();
+  } catch (e) {
+    alert("تعذر قراءة الباركود.");
+  }
+
+  html5Qr.clear();
+}
+
+/* ============================================================
+   حفظ ومشاركة QR
+   ============================================================ */
+function getQRDataURL(){
+  const img = document.querySelector("#qrCanvas img");
+  const canvas = document.querySelector("#qrCanvas canvas");
+  if (img && img.src) return img.src;
+  if (canvas) return canvas.toDataURL("image/png");
+}
+
+function saveQR(){
+  const url = getQRDataURL();
+  if (!url) return;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "alm-v3-qr.png";
+  a.click();
+}
+
+async function shareQR(){
+  const url = getQRDataURL();
+  if (!url) return;
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const file = new File([blob], "alm-v3-qr.png", {type:"image/png"});
+
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:"ALM v3 QR"});
+  } else {
+    alert("المشاركة غير مدعومة.");
+  }
+}
+
+/* ============================================================
+   التنقل بين الشاشات
+   ============================================================ */
+function showScreen(id){
+  document.querySelectorAll(".screen").forEach(s => s.style.display = "none");
+  document.getElementById(id).style.display = "block";
+}
+
+function goHome(){ showScreen("screenEncode"); }
+function goToDecode(){ showScreen("screenDecode"); }
+
+</script>
+
+</body>
+</html>
