@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ALM v2 — Arabic Language Mapping</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #ffffff;
+  color: #222;
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  background: #0BA37F;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.container {
+  padding: 20px;
+  max-width: 600px;
+  margin: auto;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  background: #0BA37F;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0a8c6c;
+}
+
+textarea, input[type="number"], input[type="file"] {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.screen {
+  display: none;
+}
+
+#qrCanvas {
+  margin: 20px auto;
+  width: 260px;
+  height: 260px;
+  text-align: center;
+}
+
+.small {
+  font-size: 13px;
+  color: #666;
+  margin-top: 5px;
+  text-align: center;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+
+<body>
+
+<header>ALM v2 — Arabic Language Mapping</header>
+
+<div class="container">
+
+<!-- شاشة الترميز -->
+<div id="screenEncode" class="screen" style="display:block;">
+  <h3>اكتب نصًا لتحويله إلى QR (ALM v2)</h3>
+  <textarea id="inputText" rows="5" placeholder="اكتب أي نص هنا..."></textarea>
+
+  <label>مفتاح المستخدم (هوية المرسل):</label>
+  <input id="userKey" type="number" value="123456789">
+
+  <button onclick="encodeToQR()">تحويل إلى QR</button>
+  <button onclick="goToDecode()">مسح أو تحميل QR لفكّه</button>
+
+  <p class="small">يعمل بدون إنترنت — كل شيء يتم داخل جهازك
+    م: رأفت عمر — تطوير: برهوم / ALM v2.</p>
+</div>
+
+<!-- شاشة عرض QR -->
+<div id="screenQR" class="screen">
+  <h3>رمز QR جاهز للمشاركة</h3>
+
+  <div id="qrCanvas"></div>
+
+  <button onclick="saveQR()">حفظ</button>
+  <button onclick="shareQR()">مشاركة</button>
+  <button onclick="goHome()">رجوع</button>
+
+  <p class="small">يمكن لأي شخص مسح هذا QR لفكّ الرسالة (مع هوية المرسل).</p>
+</div>
+
+<!-- شاشة فكّ QR -->
+<div id="screenDecode" class="screen">
+  <h3>فكّ QR (ALM v2)</h3>
+
+  <button onclick="scanQR()">مسح QR بالكاميرا</button>
+
+  <input type="file" id="qrFileInput" accept="image/*">
+  <button onclick="decodeFromQRImage()">تحميل QR من الاستديو</button>
+
+  <textarea id="qrInput" rows="3" placeholder="أو الصق نص QR هنا..."></textarea>
+  <button onclick="decodeFromQR()">فكّ</button>
+
+  <h4>النص المستخرج:</h4>
+  <div id="decodedText" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:60px;"></div>
+
+  <h4>هوية المرسل:</h4>
+  <div id="decodedIdentity" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <h4>سلامة الرسالة:</h4>
+  <div id="decodedIntegrity" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <h4>بيانات إضافية (ميتاداتا):</h4>
+  <div id="decodedMeta" style="padding:10px; border:1px solid #ccc; border-radius:8px; min-height:40px;"></div>
+
+  <button onclick="goHome()">رجوع</button>
+</div>
+
+</div>
+
+<div id="reader" style="display:none;"></div>
+
+<script>
+/* ====== التنقل بين الشاشات ====== */
+function showScreen(id){
+  document.querySelectorAll(".screen").forEach(s => s.style.display = "none");
+  document.getElementById(id).style.display = "block";
+}
+
+function goHome(){ showScreen("screenEncode"); }
+function goToDecode(){ showScreen("screenDecode"); }
+
+/* ====== نواة ALM v2 ====== */
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"
+};
+
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i);
+}
+
+/* تطبيع العربية مع الحفاظ على المسافات */
+function normalizeArabic(s){
+  return (s||"")
+  .replace(/[إأآ]/g,"ا")
+  .replace(/ى/g,"ي")
+  .replace(/ؤ/g,"و")
+  .replace(/ئ/g,"ي")
+  .replace(/ة/g,"ه")
+  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"")
+  .replace(/\s+/g," ").trim();
+}
+
+/* تحويل كلمة إلى كود BigInt (قاعدة 32) */
+function wordToCode(word){
+  let C = 0n;
+  for(let i=0;i<word.length;i++){
+    const idx = charToIndex[word[i]] || 0;
+    C += BigInt(idx) * (32n ** BigInt(i));
+  }
+  return C;
+}
+
+/* فكّ الكود إلى كلمة، مع إيقاف عند أول صفر (نهاية فعلية) */
+function codeToWord(C){
+  let chars = [];
+  for(let i=0;i<32;i++){ // حد أعلى أطول كلمة
+    const idx = Number(C % 32n);
+    C /= 32n;
+    if (idx === 0) break;
+    chars.push(indexToChar[idx] || "");
+    if (C === 0n) break;
+  }
+  return chars.join("");
+}
+
+/* تحويل base36 إلى BigInt */
+function base36ToBigInt(str){
+  let res = 0n;
+  for (let i = 0; i < str.length; i++){
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
+}
+
+/* بصمة سلامة بسيطة (checksum) على النص الأصلي بعد التطبيع */
+function simpleChecksum(str){
+  let sum = 0;
+  for (let i = 0; i < str.length; i++){
+    sum = (sum + str.charCodeAt(i) * (i + 1)) % 1000000007;
+  }
+  return sum.toString();
+}
+
+/* ====== الترميز إلى QR (ALM v2) ====== */
+function encodeToQR(){
+  const rawText = document.getElementById("inputText").value.trim();
+  const text = normalizeArabic(rawText);
+  const keyStr = document.getElementById("userKey").value || "0";
+
+  if (!text){
+    alert("أدخل نصًا أولاً (بعد التطبيع لا يوجد محتوى).");
+    return;
+  }
+
+  let key;
+  try {
+    key = BigInt(keyStr);
+  } catch(e){
+    alert("مفتاح المستخدم غير صالح.");
+    return;
+  }
+
+  const words = text.split(" ");
+  const f0 = 100000n;
+
+  const encoded = words.map(w=>{
+    const C = wordToCode(w) ^ key;
+    return (f0 + C).toString(36);
+  });
+
+  const checksum = simpleChecksum(text);
+
+  const payload = {
+    alm_version: "2.0",
+    encoding: "ALM32-BASE36-LZ",
+    text: encoded.join(","),
+    identity: key.toString(),
+    checksum: checksum,
+    meta: {
+      ts: Date.now(),
+      device: "web-client",
+      lang: "ar",
+      normalized: true
+    }
+  };
+
+  const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+
+  document.getElementById("qrCanvas").innerHTML = "";
+  new QRCode(document.getElementById("qrCanvas"), {
+    text: compressed,
+    width: 260,
+    height: 260
+  });
+
+  showScreen("screenQR");
+}
+
+/* ====== فكّ QR من نص (ALM v2) ====== */
+function decodeFromQR(){
+  const data = document.getElementById("qrInput").value.trim();
+  if (!data){
+    alert("أدخل نص QR أو امسحه أولاً.");
+    return;
+  }
+
+  const json = LZString.decompressFromEncodedURIComponent(data);
+  if (!json){
+    alert("QR غير صالح أو غير مضغوط بطريقة ALM v2.");
+    return;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(json);
+  } catch(e){
+    alert("تنسيق الحمولة غير صالح.");
+    return;
+  }
+
+  if (!payload.text || !payload.identity){
+    alert("حمولة ALM غير مكتملة.");
+    return;
+  }
+
+  let key;
+  try {
+    key = BigInt(payload.identity);
+  } catch(e){
+    alert("هوية المرسل (المفتاح) غير صالحة.");
+    return;
+  }
+
+  const f0 = 100000n;
+  const parts = payload.text.split(",");
+  const words = parts.map(p=>{
+    const f = base36ToBigInt(p);
+    const C = (f - f0) ^ key;
+    return codeToWord(C);
+  });
+
+  const decodedText = words.join(" ");
+  const recomputedChecksum = simpleChecksum(decodedText);
+  const integrityOk = (payload.checksum === recomputedChecksum);
+
+  document.getElementById("decodedText").textContent = decodedText;
+  document.getElementById("decodedIdentity").textContent = "User Key: " + payload.identity;
+
+  document.getElementById("decodedIntegrity").textContent =
+    integrityOk ? "✅ الرسالة سليمة (checksum مطابق)." :
+                  "⚠️ احتمال تغيير في الرسالة (checksum غير مطابق).";
+
+  document.getElementById("decodedMeta").textContent =
+    "ALM v" + (payload.alm_version || "؟") +
+    " — ترميز: " + (payload.encoding || "غير معروف") +
+    " — وقت الإرسال: " + (payload.meta && payload.meta.ts ? new Date(payload.meta.ts).toLocaleString() : "غير متوفر");
+}
+
+/* ====== مسح QR بالكاميرا ====== */
+function scanQR(){
+  const html5Qr = new Html5Qrcode("reader");
+
+  html5Qr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    decoded => {
+      document.getElementById("qrInput").value = decoded;
+      html5Qr.stop().catch(()=>{});
+    },
+    err => {
+      // يمكن لاحقًا تسجيل الأخطاء أو عرضها
+    }
+  ).catch(e=>{
+    alert("تعذر بدء الكاميرا لمسح QR.");
+  });
+}
+
+/* ====== فكّ QR من صورة من الاستديو ====== */
+async function decodeFromQRImage(){
+  const file = document.getElementById("qrFileInput").files[0];
+  if (!file){
+    alert("اختر صورة تحتوي على QR.");
+    return;
+  }
+
+  const html5Qr = new Html5Qrcode("reader");
+
+  try {
+    const result = await html5Qr.scanFile(file, true);
+    document.getElementById("qrInput").value = result;
+    decodeFromQR();
+  } catch (e) {
+    alert("تعذر قراءة QR من الصورة.");
+  }
+
+  html5Qr.clear().catch(()=>{});
+}
+
+/* ====== حفظ ومشاركة QR ====== */
+function getQRDataURL(){
+  const img = document.querySelector("#qrCanvas img");
+  const canvas = document.querySelector("#qrCanvas canvas");
+  if (img && img.src) return img.src;
+  if (canvas) return canvas.toDataURL("image/png");
+}
+
+function saveQR(){
+  const url = getQRDataURL();
+  if (!url){
+    alert("لا يوجد QR جاهز للحفظ.");
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "alm-v2-qr.png";
+  a.click();
+}
+
+async function shareQR(){
+  const url = getQRDataURL();
+  if (!url){
+    alert("لا يوجد QR جاهز للمشاركة.");
+    return;
+  }
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const file = new File([blob], "alm-v2-qr.png", {type:"image/png"});
+
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    await navigator.share({files:[file], title:"ALM v2 QR"});
+  } else {
+    alert("المشاركة غير مدعومة على هذا الجهاز.");
+  }
+}
+</script>
+
+</body>
+</html>
